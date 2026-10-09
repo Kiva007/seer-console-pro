@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Env/Secrets
+.env
+*.token
+
+# Claude
+.claude/
+
+# Workspace cleanup
+回收站/
+.dsh-filess/
+.workbuddy/
+.agent-teams/
+browser-screenshots/
+
+# dsh-vision-toolkit
+.dsh-vision-toolkit/
+
+# 本地账号、配置与备份（示例文件允许提交）
+ctrl.ini
+账号文本.txt
+*.bak
+*.bak-*
+*.token
+.env.*
+*.pem
+*.key
+*.lnk
+
+# 临时诊断、运行输出和参考截图
+/_*.py
+/_*.js
+/_*.txt
+/diag_*
+/lei_test_out.txt
+/information/*.png
+/information/赛尔号到期检查-中控台代码情况.md
+
+# 本机规范和参考资料，不公开
+AGENTS.md
+/information/
+*.snapshot-*
+.config-history.lock
