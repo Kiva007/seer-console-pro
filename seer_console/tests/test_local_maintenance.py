@@ -163,6 +163,31 @@ class MaintenanceTests(unittest.TestCase):
         self.assertFalse(probe_with('python.exe unrelated_tool.py', name="other.exe",
                                     executable_path="C:\\Windows\\System32\\other.exe"))
 
+    def test_piped_history_output_is_utf8(self):
+        message = "迁移前初始配置快照"
+        self.manager.save(message)
+        # 刻意去掉 PYTHONUTF8/PYTHONIOENCODING：管道下 Python 会退回系统 ANSI 代码页，
+        # 工具必须自己切到 UTF-8，中文才不会被按 UTF-8 读取的程序解成乱码。
+        environment = {key: value for key, value in os.environ.items()
+                       if key.upper() not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "config_history.py"),
+             "--project", str(self.project), "--store", str(self.store), "history"],
+            capture_output=True, env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        self.assertIn(message, result.stdout.decode("utf-8"))
+
+    def test_piped_guard_output_is_utf8(self):
+        self.init_code_repo()
+        environment = {key: value for key, value in os.environ.items()
+                       if key.upper() not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "repo_guard.py"), "check",
+             "--project", str(self.project)],
+            capture_output=True, env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        self.assertIn("未输出敏感值", result.stdout.decode("utf-8"))
+
     def test_concurrent_change_blocks_apply_after_backup(self):
         old, _ = self.manager.save("第一版")
         original = fake_data("B")

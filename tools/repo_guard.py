@@ -199,6 +199,11 @@ def install(project, legacy_git=None, sensitive_project=None):
 
 
 def main():
+    # 终端里按控制台编码输出（中文正常）；管道或重定向时改用 UTF-8，
+    # 否则检查结果里的中文会被其他程序按 UTF-8 解码成乱码。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure") and not stream.isatty():
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("check", "install", "pre-commit", "pre-push"))
     parser.add_argument("--project", type=Path, default=Path(__file__).resolve().parents[1])
