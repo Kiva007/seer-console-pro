@@ -90,6 +90,15 @@ class ConfigHistory:
             git(self.store, "config", "user.email", "local-config@localhost")
             (self.store / ".gitignore").write_text("*\n!ctrl.ini\n!账号文本.txt\n", encoding="utf-8")
         self.validate_store()
+        hook = self.store / ".git" / "hooks" / "pre-push"
+        if hook.exists() and "seer-local-config-only" not in hook.read_text(encoding="utf-8", errors="replace"):
+            raise RuntimeError("配置版本库已有其他推送 hook，拒绝覆盖；请先检查。")
+        hook.write_text(
+            "#!/bin/sh\n# seer-local-config-only\n"
+            "echo 'BLOCK: local configuration history must not be pushed.' >&2\nexit 1\n",
+            encoding="utf-8", newline="\n",
+        )
+        hook.chmod(0o755)
 
     def validate_store(self):
         if not (self.store / ".git").is_dir():
@@ -167,9 +176,11 @@ class ConfigHistory:
         script = (
             "$ErrorActionPreference='Stop'; "
             "$p=@(Get-CimInstance Win32_Process | Where-Object { "
-            "$_.Name -match '^pythonw?\\.exe$' -and "
-            "$_.CommandLine -match 'seer_console[\\\\/]main\\.py' }); "
-            "if ($p.Count -gt 0) { exit 3 }"
+            "$_.Name -match '^pythonw?\\.exe$' }); "
+            "if (@($p | Where-Object { -not $_.CommandLine }).Count -gt 0) { exit 4 }; "
+            "$app=@($p | Where-Object { "
+            "$_.CommandLine -match 'seer_console([\\\\/]|\\.)main(\\.py)?' }); "
+            "if ($app.Count -gt 0) { exit 3 }"
         )
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -235,7 +246,10 @@ def main():
             if args.apply:
                 print("恢复前快照：" + result["backup_commit"])
         return 0
-    except (RuntimeError, OSError, UnicodeError, configparser.Error):
+    except RuntimeError as error:
+        print("操作失败：" + str(error), file=sys.stderr)
+        return 1
+    except (OSError, UnicodeError, configparser.Error):
         print("操作失败，请检查文件、版本、锁或中控台状态；敏感内容未输出。", file=sys.stderr)
         return 1
 

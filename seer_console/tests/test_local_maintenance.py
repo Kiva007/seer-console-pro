@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -79,6 +80,17 @@ class MaintenanceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             history_module.ConfigHistory(self.project, self.project / "private")
 
+    def test_private_store_blocks_push_to_explicit_url(self):
+        self.manager.save("初始设置")
+        destination = self.workspace / "push-test.git"
+        result = subprocess.run(["git", "init", "--bare", str(destination)], capture_output=True)
+        self.assertEqual(result.returncode, 0)
+        result = subprocess.run(["git", "-C", str(self.store), "push", str(destination), "HEAD:refs/heads/main"],
+                                capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"local configuration history must not be pushed", result.stderr)
+        self.assertEqual(git(destination, "for-each-ref"), b"")
+
     def test_preview_has_no_writes_and_restore_saves_current_bytes(self):
         old, _ = self.manager.save("第一版")
         newer = fake_data("B")
@@ -103,6 +115,29 @@ class MaintenanceTests(unittest.TestCase):
                 self.manager.restore(old, apply=True)
         self.assertEqual(self.manager.head(), old)
         self.assertEqual(history_module.stable_read(self.project), newer)
+
+    @unittest.skipUnless(os.name == "nt", "Windows 进程探测")
+    def test_windows_process_probe_handles_module_launch_and_unknown_state(self):
+        entry = self.project / "seer_console" / "main.py"
+        entry.parent.mkdir()
+        entry.write_text("# 虚构入口，不执行\n", encoding="utf-8")
+        real_run = subprocess.run
+
+        def probe_with(command_line):
+            literal = "$null" if command_line is None else "'" + command_line.replace("'", "''") + "'"
+            prefix = "function Get-CimInstance { [pscustomobject]@{ Name='python.exe'; CommandLine=" + literal + " } }; "
+
+            def isolated_run(command, **kwargs):
+                return real_run(command[:-1] + [prefix + command[-1]], **kwargs)
+
+            with patch.object(history_module.subprocess, "run", side_effect=isolated_run):
+                return self.manager.application_running()
+
+        self.assertTrue(probe_with('python.exe -m seer_console.main'))
+        self.assertTrue(probe_with('pythonw.exe "C:\\Example\\seer_console\\main.py"'))
+        self.assertFalse(probe_with('python.exe unrelated_tool.py'))
+        with self.assertRaises(RuntimeError):
+            probe_with(None)
 
     def test_concurrent_change_blocks_apply_after_backup(self):
         old, _ = self.manager.save("第一版")
