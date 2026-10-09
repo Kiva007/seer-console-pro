@@ -10,6 +10,18 @@ import subprocess
 import sys
 
 
+# 任意层级都不上传的扩展名：截图、网页、办公文档、压缩包、影音。
+UNSAFE_SUFFIXES = (
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico",
+    ".html", ".htm", ".pdf",
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".7z", ".rar", ".tar", ".gz",
+    ".mp4", ".avi", ".mov", ".mkv", ".wav",
+)
+# 允许上传的 Markdown 白名单（相对仓库根的小写 POSIX 路径）；其余 Markdown 一律不上传。
+ALLOWED_MARKDOWN = ("readme.md", "tools/readme.md")
+
+
 def run_git(project, *args, git_dir=None):
     command = ["git", "--git-dir", str(git_dir)] if git_dir else ["git", "-C", str(project)]
     result = subprocess.run(command + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -31,8 +43,12 @@ def forbidden_path(name):
         return True
     if ".bak" in base or ".snapshot-" in base or base.endswith((".log", ".token", ".pem", ".key", ".lnk", ".pyc", ".pyo")):
         return True
-    if len(parts) == 1 and (base.startswith(("_", "diag_")) or base.endswith((".png", ".html"))):
+    if len(parts) == 1 and base.startswith(("_", "diag_")):
         return True
+    if base.endswith(UNSAFE_SUFFIXES):
+        return True  # 截图、网页、办公文档、压缩包等任意层级都不上传
+    if base.endswith(".md") and "/".join(parts) not in ALLOWED_MARKDOWN:
+        return True  # 只放行白名单内的说明文档，避免本机笔记随子目录混入
     if len(parts) == 1 and base.endswith(".txt") and base != "账号文本.example.txt":
         return True
     return False

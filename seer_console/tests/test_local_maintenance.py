@@ -80,6 +80,19 @@ class MaintenanceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             history_module.ConfigHistory(self.project, self.project / "private")
 
+    def test_store_validation_detects_missing_push_block(self):
+        self.manager.save("初始设置")
+        hook = self.store / ".git" / "hooks" / "pre-push"
+        self.assertTrue(hook.is_file())
+        hook.unlink()
+        with self.assertRaisesRegex(RuntimeError, "拒绝推送"):
+            self.manager.history()
+        with self.assertRaisesRegex(RuntimeError, "拒绝推送"):
+            self.manager.restore(self.manager.head())
+        self.manager.save("重装拒绝推送 hook")
+        self.assertTrue(self.manager.push_block_installed())
+        self.manager.history()  # 重装后只读命令恢复可用
+
     def test_private_store_blocks_push_to_explicit_url(self):
         self.manager.save("初始设置")
         destination = self.workspace / "push-test.git"
@@ -123,9 +136,13 @@ class MaintenanceTests(unittest.TestCase):
         entry.write_text("# 虚构入口，不执行\n", encoding="utf-8")
         real_run = subprocess.run
 
-        def probe_with(command_line):
-            literal = "$null" if command_line is None else "'" + command_line.replace("'", "''") + "'"
-            prefix = "function Get-CimInstance { [pscustomobject]@{ Name='python.exe'; CommandLine=" + literal + " } }; "
+        def probe_with(command_line, name="python.exe", executable_path=None):
+            def literal(value):
+                return "$null" if value is None else "'" + value.replace("'", "''") + "'"
+
+            prefix = ("function Get-CimInstance { [pscustomobject]@{ Name=" + literal(name) +
+                      "; CommandLine=" + literal(command_line) +
+                      "; ExecutablePath=" + literal(executable_path) + " } }; ")
 
             def isolated_run(command, **kwargs):
                 return real_run(command[:-1] + [prefix + command[-1]], **kwargs)
@@ -138,6 +155,13 @@ class MaintenanceTests(unittest.TestCase):
         self.assertFalse(probe_with('python.exe unrelated_tool.py'))
         with self.assertRaises(RuntimeError):
             probe_with(None)
+        # 项目目录内启动的可执行体（打包成 exe 的形式）也算在运行；
+        # 探测脚本里的项目路径取自 resolve() 后的目录，这里必须用同一形态，
+        # 否则 8.3 短名（K-SIR~1）与长名（K - Sir）不匹配，断言会假失败。
+        self.assertTrue(probe_with(None, name="SeerConsole.exe",
+                                   executable_path=str(self.manager.project / "dist" / "SeerConsole.exe")))
+        self.assertFalse(probe_with('python.exe unrelated_tool.py', name="other.exe",
+                                    executable_path="C:\\Windows\\System32\\other.exe"))
 
     def test_concurrent_change_blocks_apply_after_backup(self):
         old, _ = self.manager.save("第一版")
@@ -220,6 +244,25 @@ class MaintenanceTests(unittest.TestCase):
         self.assertFalse(repo_guard.forbidden_path("账号文本.example.txt"))
         for name in ("AGENTS.md", "tools/AGENTS.md", "ctrl.ini.bak", ".env", "information/readme.md"):
             self.assertTrue(repo_guard.forbidden_path(name))
+
+    def test_guard_forbids_media_and_notes_at_any_depth(self):
+        for name in ("shot.png", "seer_console/ui/shot.png", "docs/note.md", "tools/notes.md",
+                     "backup.zip", "docs/设计.docx", "docs/页面.html", "information/readme.md"):
+            self.assertTrue(repo_guard.forbidden_path(name), name)
+        for name in ("README.md", "tools/README.md", "LICENSE", "ctrl.example.ini",
+                     "账号文本.example.txt", "seer_console/core/engine.py", "start-seer-console.ps1"):
+            self.assertFalse(repo_guard.forbidden_path(name), name)
+
+    def test_guard_blocks_staged_screenshot_in_subdirectory(self):
+        self.init_code_repo()
+        screenshot = self.project / "seer_console" / "ui" / "shot.png"
+        screenshot.parent.mkdir(parents=True)
+        screenshot.write_bytes(b"\x89PNG\r\n\x1a\n fake screenshot")
+        git(self.project, "add", "seer_console/ui/shot.png")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(RuntimeError):
+            repo_guard.check(self.project)
+        self.assertIn("seer_console/ui/shot.png", stderr.getvalue())
 
 
 if __name__ == "__main__":

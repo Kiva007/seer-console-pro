@@ -89,7 +89,7 @@ class ConfigHistory:
             git(self.store, "config", "user.name", "Local configuration")
             git(self.store, "config", "user.email", "local-config@localhost")
             (self.store / ".gitignore").write_text("*\n!ctrl.ini\n!账号文本.txt\n", encoding="utf-8")
-        self.validate_store()
+        self.validate_store(require_push_block=False)  # 拒绝推送 hook 在本方法末尾安装
         hook = self.store / ".git" / "hooks" / "pre-push"
         if hook.exists() and "seer-local-config-only" not in hook.read_text(encoding="utf-8", errors="replace"):
             raise RuntimeError("配置版本库已有其他推送 hook，拒绝覆盖；请先检查。")
@@ -99,8 +99,13 @@ class ConfigHistory:
             encoding="utf-8", newline="\n",
         )
         hook.chmod(0o755)
+        self.validate_store()  # 装好 hook 再核对一次，避免带着不完整的保护继续
 
-    def validate_store(self):
+    def push_block_installed(self):
+        hook = self.store / ".git" / "hooks" / "pre-push"
+        return hook.is_file() and "seer-local-config-only" in hook.read_text(encoding="utf-8", errors="replace")
+
+    def validate_store(self, require_push_block=True):
         if not (self.store / ".git").is_dir():
             raise RuntimeError("配置版本库尚未初始化，请先 save。")
         if git(self.store, "remote").strip():
@@ -110,6 +115,8 @@ class ConfigHistory:
         tracked = set(git(self.store, "ls-files", "-z").decode("utf-8").split("\0")) - {""}
         if tracked - set(FILES):
             raise RuntimeError("配置版本库存在范围外的跟踪文件，拒绝操作。")
+        if require_push_block and not self.push_block_installed():
+            raise RuntimeError("配置版本库缺少拒绝推送的本地 hook，请先执行 save 重装后再操作。")
 
     @contextmanager
     def lock(self):
@@ -173,13 +180,18 @@ class ConfigHistory:
             return False  # 独立测试目录没有中控台入口
         if os.name != "nt":
             raise RuntimeError("无法在此平台确认中控台已关闭，拒绝实际恢复。")
+        project = str(self.project).replace("'", "''")
         script = (
             "$ErrorActionPreference='Stop'; "
-            "$p=@(Get-CimInstance Win32_Process | Where-Object { "
-            "$_.Name -match '^pythonw?\\.exe$' }); "
+            "$project='" + project + "'; "
+            "$all=@(Get-CimInstance Win32_Process); "
+            "$p=@($all | Where-Object { $_.Name -match '^pythonw?\\.exe$' }); "
             "if (@($p | Where-Object { -not $_.CommandLine }).Count -gt 0) { exit 4 }; "
             "$app=@($p | Where-Object { "
             "$_.CommandLine -match 'seer_console([\\\\/]|\\.)main(\\.py)?' }); "
+            "if ($app.Count -eq 0) { $app=@($all | Where-Object { "
+            "$_.ExecutablePath -and "
+            "$_.ExecutablePath.StartsWith($project + '\\', [StringComparison]::OrdinalIgnoreCase) }) }; "
             "if ($app.Count -gt 0) { exit 3 }"
         )
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
